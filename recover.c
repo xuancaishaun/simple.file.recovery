@@ -1,7 +1,72 @@
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 void printUsage(void);
+void printSysInfo(char* deviceName);
+
+#pragma pack(push,1)
+struct BootEntry{
+	unsigned char BS_jmpBoot[3];
+	unsigned char BS_OEMName[8];
+	unsigned short BPB_BytesPerSec;	/*Bytes per sector. Allowed values include 512
+	******				 1024, 2048 and 4096.*/
+	unsigned char BPB_SecPerClus;	/*Sectors per cluster (data unit). Allowed values
+	******				 are powers of 2, but the cluster size must be 32KB
+					 or smaller.*/
+	unsigned short BPB_RsvdSecCnt;  /*Size in sectors of the reserved areas.*/
+	//******
+	unsigned char BPB_NumFATs; 	/*Number of FATs*/
+	//******
+	unsigned short BPB_RootEntCnt;	/*Maximum number of files in the root directory for
+					 FAT12 and FAT16. This is 0 for FAT32.*/
+	unsigned short BPB_TotSec16;	/*16-bit values of number of sectors in file system.*/
+	//******
+	unsigned char BPB_Media;	/*Media Type*/
+	unsigned short BPB_FATSz16;	/*16-bit size in sectors of each FAT for FAT12 and FAT16.
+					 For FAT32, this field is 0.*/
+	unsigned short BPB_SecPerTrk;	/*Sectors per track of storage device.*/
+	unsigned short BPB_NumHeads;	/*Number of heads in storage device.*/
+	unsigned long BPB_HiddSec;	/*Number of sectors before the start of the partition.*/
+	unsigned long BPB_TotSec32;	/*32-bit value of number of sectors in file system.
+	******				 Either this value or the 16-bit value above must be 0.*/
+	unsigned long BPB_FATSz32;	/*32-bit */
+	unsigned short BPB_ExtFlags;	/*A flag for FAT*/
+	unsigned short BPB_FSVer;	/*The major and minor version number*/
+	unsigned long BPB_RootClus;	/*Cluster where the root directory can be found.*/
+	unsigned short BPB_FAInfo;	/*Sector where FSINFO structure can be found*/
+	unsigned short BPB_BkBootSec;	/*Sector where backup copy of boot sector is located*/
+	unsigned char BPB_Reserved[12];	/*Reserved*/
+	unsigned char BS_DrvNum;	/*BIOS INT13h drive number*/
+	unsigned char BS_Reserved1;	/*Not used*/
+	unsigned char BS_BootSig;	/*Extended boot signature to identify if the next three
+					 values are valid*/
+	unsigned long BS_VolID;		/*Volume serial number*/
+	unsigned char BS_VolLab[11];	/*Volume label in ASCII. User defines when ceating the file system*/
+	unsigned char BS_FilSysType[8];	/*File system type label in ASCII*/
+};
+#pragma pack(pop)
+
+#pragma pack(push,1)
+struct DirEntry{
+	unsigned char DIR_NAME[11];	
+	unsigned char DIR_Attr;
+	unsigned char DIR_NTRes;
+	unsigned char DIR_CrtTimeTenth;
+	unsigned short DIR_CrtTime;
+	unsigned short DIR_CrtDate;
+	unsigned short DIR_LatAccDate;
+	unsigned short DIR_FstClusHI;
+	unsigned short DIR_WrtTime;
+	unsigned short DIR_WrtDate;
+	unsigned short DIR_FstClusLO;
+	unsigned long DIR_FileSize;
+};
+#pragma pack(pop)
 
 int main(int argc, char **argv){
 
@@ -14,8 +79,11 @@ int main(int argc, char **argv){
 			if (strcmp(argv[1], "-d") == 0){
 				if (strcmp(argv[3], "-i") == 0){
 					printf("-i detected\n");
+/**
+* Milestone 2: Printing file system information
+*/	
 					// Example: ./revover -d fat32.disk -i
-					// do something
+					printSysInfo(argv[2]);
 					return 0;
 				}
 				else if (strcmp(argv[3], "-l") == 0){
@@ -47,4 +115,15 @@ void printUsage(void){
 	printf("-i			Print boot sector information\n");
 	printf("-l			List all the directory entries\n");
 	printf("-r filename [-m md5]	File recovery\n");
+}
+
+void printSysInfo(char* filePath){
+	int fd;
+	struct BootEntry * bootEntry = malloc(sizeof(struct BootEntry));
+	fd = fopen(filePath, 'r');
+	
+	printf("%s\n", filePath);
+	
+	read(fd, bootEntry, sizeof(struct BootEntry));
+	
 }
