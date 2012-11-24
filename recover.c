@@ -10,6 +10,7 @@
 
 void printUsage(void);
 void printSysInfo(char* deviceName);
+void printDirInfo(char* rootPath);
 
 #pragma pack(push,1)
 struct BootEntry{
@@ -55,18 +56,18 @@ struct BootEntry{
 
 #pragma pack(push,1)
 struct DirEntry{
-	unsigned char DIR_NAME[11];	
+	unsigned char DIR_NAME[11];		/* File name*/
 	unsigned char DIR_Attr;
 	unsigned char DIR_NTRes;
 	unsigned char DIR_CrtTimeTenth;
 	unsigned short DIR_CrtTime;
 	unsigned short DIR_CrtDate;
 	unsigned short DIR_LatAccDate;
-	unsigned short DIR_FstClusHI;
+	unsigned short DIR_FstClusHI;	/* High 2 bytes of the first cluster address*/
 	unsigned short DIR_WrtTime;
 	unsigned short DIR_WrtDate;
-	unsigned short DIR_FstClusLO;
-	unsigned long DIR_FileSize;
+	unsigned short DIR_FstClusLO; 	/* Low 2 bytes of the first cluster address*/
+	unsigned long DIR_FileSize;		/* File size in bytes. (0 for directories)*/
 };
 #pragma pack(pop)
 
@@ -88,9 +89,11 @@ int main(int argc, char **argv){
 					return 0;
 				}
 				else if (strcmp(argv[3], "-l") == 0){
-					printf("-l detected\n");
+					/**
+					* Milestone 3: Listing all directory entries
+					*/
 					// Example: ./recover -d fat32.disk -l
-					// do something
+					printDirInfo(argv[2]);
 					return 0;
 				}
 			}
@@ -119,18 +122,27 @@ void printUsage(void){
 }
 
 void printSysInfo(char* filePath){
-	int fd, count;
+	int fd;
 	struct BootEntry * bootEntry = (struct BootEntry *)malloc(sizeof(struct BootEntry));
 	
 	if((fd=open((const char *)filePath, O_RDONLY))==-1) perror("Error");
-
 	if (debugFlag) printf("Device file: %s\n", filePath);
 	if (debugFlag) printf("The size of BootEntry: %d\n", (int)sizeof(struct BootEntry));
-
 	if((int)read(fd, (void *) bootEntry, sizeof(struct BootEntry))==-1) perror("Error");
 
 	printf("Number of FATs = %d\n", bootEntry->BPB_NumFATs);
 	printf("Number of bytes per sector = %d\n", bootEntry->BPB_BytesPerSec);
 	printf("Number of sectors per cluster = %d\n", bootEntry->BPB_SecPerClus);
 	printf("Number of reserved sectors = %d\n", bootEntry->BPB_RsvdSecCnt);
+}
+
+void printDirInfo(char* rootPath){
+	int dd;
+	struct DirEntry * tmpDir = (struct DirEntry *)malloc(sizeof(struct DirEntry));
+
+	if((dd=open(rootPath, O_RDONLY)) == -1) { perror("Error"); return; }
+	if(((int)read(dd, (void *)tmpDir, (int)sizeof(struct DirEntry)))==-1) { perror("Error"); return; }
+
+	printf("1, %s, %ld, %d\n", tmpDir->DIR_NAME, tmpDir->DIR_FileSize, tmpDir->DIR_FstClusLO);
+
 }
