@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#define debugFlag 0
+
 void printUsage(void);
 void printSysInfo(char* deviceName);
 
@@ -78,10 +80,9 @@ int main(int argc, char **argv){
 		case 4:
 			if (strcmp(argv[1], "-d") == 0){
 				if (strcmp(argv[3], "-i") == 0){
-					printf("-i detected\n");
-/**
-* Milestone 2: Printing file system information
-*/	
+					/**
+					* Milestone 2: Printing file system information
+					*/	
 					// Example: ./revover -d fat32.disk -i
 					printSysInfo(argv[2]);
 					return 0;
@@ -118,12 +119,18 @@ void printUsage(void){
 }
 
 void printSysInfo(char* filePath){
-	int fd;
-	struct BootEntry * bootEntry = malloc(sizeof(struct BootEntry));
-	fd = fopen(filePath, 'r');
+	int fd, count;
+	struct BootEntry * bootEntry = (struct BootEntry *)malloc(sizeof(struct BootEntry));
 	
-	printf("%s\n", filePath);
-	
-	read(fd, bootEntry, sizeof(struct BootEntry));
-	
+	if((fd=open((const char *)filePath, O_RDONLY))==-1) perror("Error");
+
+	if (debugFlag) printf("Device file: %s\n", filePath);
+	if (debugFlag) printf("The size of BootEntry: %d\n", (int)sizeof(struct BootEntry));
+
+	if((int)read(fd, (void *) bootEntry, sizeof(struct BootEntry))==-1) perror("Error");
+
+	printf("Number of FATs = %d\n", bootEntry->BPB_NumFATs);
+	printf("Number of bytes per sector = %d\n", bootEntry->BPB_BytesPerSec);
+	printf("Number of sectors per cluster = %d\n", bootEntry->BPB_SecPerClus);
+	printf("Number of reserved sectors = %d\n", bootEntry->BPB_RsvdSecCnt);
 }

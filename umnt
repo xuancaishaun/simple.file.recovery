@@ -1,2 +1,2 @@
 #!/bin/bash
-sudo umount /mnt/rd
+sudo umount ./rootDir

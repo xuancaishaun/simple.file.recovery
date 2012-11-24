@@ -1,5 +1,5 @@
 #!/bin/bash
-sudo dd if=/dev/zero of=/dev/ram1 bs=64M count=1
-sudo mkfs.vfat -F 32 /dev/ram1
-sudo mkfs.vfat -F 32 -f 2 -S 512 -s 1 -R 32 /dev/ram1
+sudo dd if=/dev/zero of=./mydisk bs=64M count=1
+sudo mkfs.vfat -F 32 ./mydisk
+sudo mkfs.vfat -F 32 -f 2 -S 512 -s 1 -R 32 ./mydisk
 
