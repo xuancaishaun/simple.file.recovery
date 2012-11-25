@@ -152,12 +152,23 @@ void printDirInfo(char* filePath){
 	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_RsvdSecCnt, SEEK_CUR); // Reserved area
 	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs, SEEK_CUR); // FAT Areas
 
-	printf("BPB_RsvdSecCnt: %d\n", bootEntry->BPB_RsvdSecCnt);
-	printf("BPB_HiddSec: %ld\n", bootEntry->BPB_HiddSec);
-	printf("BPB_FATSz32: %ld\n", bootEntry->BPB_FATSz32);
-	printf("BPB_NumFATs: %d\n", bootEntry->BPB_NumFATs);
-	printf("ByteOfRootDir: %ld\n", bootEntry->BPB_BytesPerSec * (bootEntry->BPB_HiddSec + bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs));
+	printf("BPB_RsvdSecCnt	: %d\n", bootEntry->BPB_RsvdSecCnt);
+	printf("BPB_RootEntCnt: %d\n", bootEntry->BPB_RootEntCnt);
+	printf("BPB_TotSec16:%d\n", bootEntry->BPB_TotSec16);
+	printf("BPB_Media	:%d\n", bootEntry->BPB_Media);
+	printf("BPB_FATSz16	:%d\n", bootEntry->BPB_FATSz16);	
+	printf("BPB_SecPerTrk	:%d\n", bootEntry->BPB_SecPerTrk);
+	printf("BPB_NumHeads	:%d\n", bootEntry->BPB_NumHeads);
+	printf("BPB_HiddSec	:%ld\n", bootEntry->BPB_HiddSec);
+	printf("BPB_TotSec32	:%ld\n", bootEntry->BPB_TotSec32);
+	printf("BPB_BkBootSec	: %d\n", bootEntry->BPB_BkBootSec);
+
 	
+	//printf("BPB_HiddSec	: %ld\n", bootEntry->BPB_HiddSec);
+	printf("BPB_FATSz32	: %ld\n", bootEntry->BPB_FATSz32);
+	printf("BPB_NumFATs	: %d\n", bootEntry->BPB_NumFATs);
+	printf("ByteOfRootDir: %ld\n", bootEntry->BPB_BytesPerSec * (bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_TotSec32*bootEntry->BPB_NumFATs));
+
 	//if(((int)read(dd, (void *)tmpDir, (int)sizeof(struct DirEntry)))==-1) { perror("Error"); return; }
 
 	//printf("1, %s, %ld, %d\n", tmpDir->DIR_NAME, tmpDir->DIR_FileSize, tmpDir->DIR_FstClusLO);
