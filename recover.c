@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define debugFlag 1 
+#define debugFlag 1
 
 void initBootInfo(char* filePath); // Initialize Boot Sector Information. IMPORTANT.
 void printUsage(void);
@@ -94,6 +94,7 @@ static unsigned long	global_RootClus;
 static unsigned long 	global_RootStartByte;
 static unsigned long 	global_FATStartByte;
 static unsigned long 	global_FATTotalByte;
+static int		global_fd;
 
 int main(int argc, char **argv){
 
@@ -143,10 +144,9 @@ int main(int argc, char **argv){
 
 void initBootInfo(char * filePath){	// Used to initialize information about boot sector
 	// Must be called
-	int fd;
 	struct BootEntry * bootEntry = (struct BootEntry *) malloc(BOOT_SIZE);
-	if((fd = open((const char *) filePath, O_RDONLY)) == -1) { perror("Error: fail to read info. about Boot Sector"); exit(-1);}
-	if((int)read(fd, (void *)bootEntry, BOOT_SIZE) == -1) {perror("Error: fail to read info. about Boot Sector"); exit(-1);}
+	if((global_fd = open((const char *) filePath, O_RDONLY)) == -1) { perror("Error: fail to read info. about Boot Sector"); exit(-1);}
+	if((int)read(global_fd, (void *)bootEntry, BOOT_SIZE) == -1) {perror("Error: fail to read info. about Boot Sector"); exit(-1);}
 	global_initFlag    = 1;
 	global_BytesPerSec = bootEntry->BPB_BytesPerSec;
 	global_SecPerClus  = bootEntry->BPB_SecPerClus;
@@ -158,6 +158,7 @@ void initBootInfo(char * filePath){	// Used to initialize information about boot
 	global_RootStartByte = global_BytesPerSec * (global_HiddSec + global_RsvdSecCnt + global_NumFATs * global_FATSz32);
 	global_FATStartByte  = global_RsvdSecCnt * global_BytesPerSec;
 	global_FATTotalByte  = global_FATSz32 * global_BytesPerSec;
+
 	if (debugFlag) printf("RootStartByte = %ld\n", global_RootStartByte);
 	if (debugFlag) printf("FATStartByte = %ld\n", global_FATStartByte);
 	if (debugFlag) printf("FATTotalByte = %ld\n", global_FATTotalByte);
@@ -180,25 +181,27 @@ void printSysInfo(char* filePath){
 
 int printOneInfo(char* filePath, int id, int startByte){
 	// Example: 1, MAKEFILE, 21, 11
-	int fd;
 	struct DirEntry * tmp = (struct DirEntry *)malloc(DIRENT_SIZE);
 	
-	if((fd = open((const char*)filePath, O_RDONLY)) == -1) {perror("Error: printOneInfo()"); exit(-1);}
-	if(lseek(fd, startByte, 0) == -1) { perror("Error: printOneInfo()"); exit(-1);}
-	if(read(fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+//	if((fd = open((const char*)filePath, O_RDONLY)) == -1) {perror("Error: printOneInfo()"); exit(-1);}
+	if(lseek(global_fd, startByte, 0) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+	if(read(global_fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
 	
 	// Requirement A: check if this is the last entry in Root directory
 	if(tmp->DIR_Name[0] == 0) {
+		if(debugFlag) printf("FLAG_EOF reached \n");
 		return FLAG_EOF;
 	}
 
 	// Requirement B: check if this entry is deleted or not.
 	if(tmp->DIR_Name[0] == 229){	// 229 <==> 0xE5 ==> dot
+		if(debugFlag) printf("FLAG_Not_Printed reached\n");
 		return FLAG_Not_Printed; 
 	}
 
 	// Requirement C: check if this is LFN or not.
 	if(tmp->DIR_Attr == 15){	// 15 <==> 0x0F ==> Long File Name, just ignore
+		if(debugFlag) printf("LFN reached\n");
 		return FLAG_Not_Printed;
 	}
 
@@ -219,11 +222,9 @@ int printOneInfo(char* filePath, int id, int startByte){
 	}else{	
 		// Folder
 		//    => Folder/, 0, StartClus
-		//    => Folder/., 0, StartClus
-		//    => Folder/.., 0, 0
+		//    => Folder/., 0, StartClus => printed later
+		//    => Folder/.., 0, 0	=> printed later
 		printf("%d, %s/, 0, %d\n", id, fileName, clusNum);
-		printf("%d, %s/., 0, %d\n", id + 1, fileName, clusNum);
-		printf("%d, %s/.., 0, 0\n", id + 2, fileName);
 		return clusNum;
 	}
 	/* IMPORTANT Note for return value*/
@@ -232,6 +233,8 @@ int printOneInfo(char* filePath, int id, int startByte){
 	//	(b) FLAG_Not_Printed: this entry is not printed and do not increase id.
 	//	(c) FLAG_FILE: this entry is a file
 	//	(d) Values > 1: this is a sub-directory and its starting cluster is Return Value. 
+
+	if (debugFlag) printf("WTF\n");
 }
 
 int check_file(char first_char, char file_attr){
@@ -260,64 +263,31 @@ int getStartByte(int clusternum){
 
 void printAllInfo(char* filePath){
 	int current_byte = global_RootStartByte;
-	int order_id = 1;
+	int current_id = 1;
+	int cluster_id = 2; // Root dir starts at cluster 2
+	int ret_value;
 	
-		
-	
-	if(printOneInfo(filePath, 1, global_RootStartByte)==FLAG_FILE) printf("This is a file\n");
+//	printOneInfo(filePath, current_id, global_RootStartByte + 9 * 32);
 
-	int dd, fd;
-	struct BootEntry * bootEntry = (struct BootEntry *)malloc(sizeof(struct BootEntry));
-	struct DirEntry * tmpDir = (struct DirEntry *)malloc(sizeof(struct DirEntry));
-	
-	// Read boot sector information
-	if((fd=open((const char *)filePath, O_RDONLY))==-1) perror("Error");
-	if((int)read(fd, (void *) bootEntry, sizeof(struct BootEntry))==-1) perror("Error");
-
-	// Read directories	
-	//if((dd=open(filePath, O_RDONLY)) == -1) { perror("Error"); return; }
-
-	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_HiddSec	, SEEK_CUR); // Hidden area
-	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_RsvdSecCnt, SEEK_CUR); // Reserved area
-	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs, SEEK_CUR); // FAT Areas
-
-	printf("BPB_RsvdSecCnt: %d\n", bootEntry->BPB_RsvdSecCnt);
-	printf("BPB_HiddSec: %ld\n", bootEntry->BPB_HiddSec);
-	printf("BPB_FATSz32: %ld\n", bootEntry->BPB_FATSz32);
-	printf("BPB_NumFATs: %d\n", bootEntry->BPB_NumFATs);
-	printf("ByteOfRootDir: %ld\n", bootEntry->BPB_BytesPerSec * (bootEntry->BPB_HiddSec + bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs));
-	
-	if( lseek(fd,(bootEntry->BPB_BytesPerSec * (bootEntry->BPB_HiddSec + bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs)), 0) <0 ){
-			printf("lseek error");
-	}
-	int i = 0, ret_val=0, f_cluster=0;
-	char f_name[12];
-	while (1){
-		(int)read(fd, (void *)tmpDir, (int)sizeof(struct DirEntry));
-//		if (check_zero(tmpDir)==0){ break;}
-		if ( (ret_val = check_file(tmpDir->DIR_Name[0], tmpDir->DIR_Attr)) > 0) {
-			i++;
-			int j=0, k=0;
-			while(tmpDir->DIR_Name[j]!=32 && j<8){ f_name[j]=tmpDir->DIR_Name[j];j++;}
-			k=j, j=8;
-			if(ret_val==2){f_name[k] = '.'; k++;}
-			while(tmpDir->DIR_Name[j]!=32 && j<11){f_name[k]=tmpDir->DIR_Name[j];j++;k++;}
-			f_name[k]='\0';
-
-			f_cluster = getClusNum(tmpDir->DIR_FstClusHI, tmpDir->DIR_FstClusLO);
-			
-			if (ret_val == 1) {	
-				printf("%d, %s/, %ld, %d\n", i, f_name, tmpDir->DIR_FileSize, f_cluster);
-			}
-			else if (ret_val == 2){
-				printf("%d, %s, %ld, %d\n", i, f_name, tmpDir->DIR_FileSize, f_cluster);
-			}
+	while(1){
+		switch(ret_value = printOneInfo(filePath, current_id, current_byte)){
+			case FLAG_EOF:
+				if (debugFlag) printf("Last entry reached\n");
+				return;
+			case FLAG_Not_Printed:
+				break;
+			case FLAG_FILE:
+				current_id ++;
+				break;
+			default:	// This is a folder; ret_val => starting address of cluster
+				current_id ++;
+				break;
 		}
-//		else printf("Not valid!\n");
+		current_byte += DIRENT_SIZE;
 	}
-	
-	printf("BPB_RootClus = %ld\n", bootEntry->BPB_RootClus);
+	return;	
 
 }
+
 
 
