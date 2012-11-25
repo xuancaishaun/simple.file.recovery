@@ -6,16 +6,17 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define debugFlag 1
+#define debugFlag 1 
 
 void initBootInfo(char* filePath); // Initialize Boot Sector Information. IMPORTANT.
 void printUsage(void);
 void printSysInfo(char* filePath); // print info. about Boot Sector.
-int  printOneInfo(char* filePath, int id, int startByte); // print info. about a single File or Folder.
+int  printOneInfo(char* filePath, int id, int startByte, int subFlag, char* parentFileName); // print info. about a single File or Folder.
 void printAllInfo(char* filePath); // print info. about File/Folder under Root and sub-root Directories.
 int  getClusNum(char hi, char lo);
 int  getStartByte(int clusterNum);
-
+void getFileName(char* filePath, int startByte, char* fileName);
+unsigned long  getNextClusterNum(int currentClusterNum);
 
 #pragma pack(push,1)
 struct BootEntry{
@@ -159,9 +160,9 @@ void initBootInfo(char * filePath){	// Used to initialize information about boot
 	global_FATStartByte  = global_RsvdSecCnt * global_BytesPerSec;
 	global_FATTotalByte  = global_FATSz32 * global_BytesPerSec;
 
-	if (debugFlag) printf("RootStartByte = %ld\n", global_RootStartByte);
-	if (debugFlag) printf("FATStartByte = %ld\n", global_FATStartByte);
-	if (debugFlag) printf("FATTotalByte = %ld\n", global_FATTotalByte);
+	if (debugFlag) printf("\t---> RootStartByte = %ld\n", global_RootStartByte);
+	if (debugFlag) printf("\t---> FATStartByte = %ld\n", global_FATStartByte);
+	if (debugFlag) printf("\t---> FATTotalByte = %ld\n", global_FATTotalByte);
 }
 
 void printUsage(void){
@@ -179,52 +180,49 @@ void printSysInfo(char* filePath){
 	printf("Number of reserved sectors = %d\n", global_RsvdSecCnt);
 }
 
-int printOneInfo(char* filePath, int id, int startByte){
+int printOneInfo(char* filePath, int id, int startByte, int subFlag, char* parentDirName){
 	// Example: 1, MAKEFILE, 21, 11
 	struct DirEntry * tmp = (struct DirEntry *)malloc(DIRENT_SIZE);
 	
-//	if((fd = open((const char*)filePath, O_RDONLY)) == -1) {perror("Error: printOneInfo()"); exit(-1);}
 	if(lseek(global_fd, startByte, 0) == -1) { perror("Error: printOneInfo()"); exit(-1);}
 	if(read(global_fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
 	
 	// Requirement A: check if this is the last entry in Root directory
-	if(tmp->DIR_Name[0] == 0) {
-		if(debugFlag) printf("FLAG_EOF reached \n");
+	if(tmp->DIR_Name[0] == 0) {	// 0  <==> 0x00
+		if(debugFlag) printf("\t---> FLAG_EOF reached \n");
 		return FLAG_EOF;
 	}
 
 	// Requirement B: check if this entry is deleted or not.
-	if(tmp->DIR_Name[0] == 229){	// 229 <==> 0xE5 ==> dot
-		if(debugFlag) printf("FLAG_Not_Printed reached\n");
+	if(tmp->DIR_Name[0] == 229){	// 229 <==> 0xE5
+		if(debugFlag) printf("\t---> FLAG_Not_Printed reached\n");
 		return FLAG_Not_Printed; 
 	}
 
 	// Requirement C: check if this is LFN or not.
 	if(tmp->DIR_Attr == 15){	// 15 <==> 0x0F ==> Long File Name, just ignore
-		if(debugFlag) printf("LFN reached\n");
+		if(debugFlag) printf("\t---> LFN reached\n");
 		return FLAG_Not_Printed;
 	}
 
 	// Requirement D: 
 	// File => FileName.Extension
 	int clusNum = getClusNum(tmp->DIR_FstClusHI, tmp->DIR_FstClusLO);	
+	
 	char fileName[12];
-	int j = 0, k = 0;
-	while(tmp->DIR_Name[j] != 32 && j < 8) fileName[k++] = tmp->DIR_Name[j++]; 
-	if(tmp->DIR_Attr / 16 % 2 == 0) fileName[k++] = '.';
-	j = 8;
-	while(tmp->DIR_Name[j] != 32 && j < 11) fileName[k++] = tmp->DIR_Name[j++];
-	fileName[k] = '\0';
+	getFileName(filePath, startByte, fileName);	
 
 	if(tmp->DIR_Attr / 16 % 2 == 0){ // xxx0 xxxx ==> this is a File.
-		printf("%d, %s, %ld, %d\n", id, fileName, tmp->DIR_FileSize, clusNum);
+		if(subFlag) printf("%d, %s/%s, %ld, %d\n", id, parentDirName, fileName, tmp->DIR_FileSize, clusNum);
+		else printf("%d, %s, %ld, %d\n", id, fileName, tmp->DIR_FileSize, clusNum);
 		return FLAG_FILE;
 	}else{	
 		// Folder
 		//    => Folder/, 0, StartClus
 		//    => Folder/., 0, StartClus => printed later
 		//    => Folder/.., 0, 0	=> printed later
-		printf("%d, %s/, 0, %d\n", id, fileName, clusNum);
+		if(subFlag) printf("%d, %s/%s, 0, %d\n", id, parentDirName, fileName, clusNum);
+		else printf("%d, %s/, 0, %d\n", id, fileName, clusNum);
 		return clusNum;
 	}
 	/* IMPORTANT Note for return value*/
@@ -237,16 +235,18 @@ int printOneInfo(char* filePath, int id, int startByte){
 	if (debugFlag) printf("WTF\n");
 }
 
-int check_file(char first_char, char file_attr){
-	//printf("First Char of Filename: %d\t", first_char);
-	//printf("File Attribute = %x\n", file_attr);
-	if (first_char != 0 && first_char != -27 && (file_attr+1)%16 != 0){
-		if(file_attr >= 16 && file_attr < 32)
-			return 1;
-		else if(file_attr >= 32)
-			return 2;
-	}
-	else return 0;
+void getFileName(char* filePath, int startByte, char* fileName){
+	struct DirEntry * tmp = (struct DirEntry *) malloc(DIRENT_SIZE);
+	if(lseek(global_fd, startByte, 0) == -1) { perror("Error: getFileName()"); exit(-1);}
+	if(read(global_fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: getFileName()"); exit(-1);}
+	
+	//char fileName[12];
+        int j = 0, k = 0;
+        while(tmp->DIR_Name[j] != 32 && j < 8) fileName[k++] = tmp->DIR_Name[j++];
+        if(tmp->DIR_Attr / 16 % 2 == 0) fileName[k++] = '.';
+        j = 8;
+        while(tmp->DIR_Name[j] != 32 && j < 11) fileName[k++] = tmp->DIR_Name[j++];
+        fileName[k] = '\0';
 }
 
 int getClusNum(char hi, char lo){
@@ -261,18 +261,38 @@ int getStartByte(int clusternum){
 	return (global_RootStartByte + (clusternum-2) * global_SecPerClus * global_BytesPerSec);
 }
 
-void printAllInfo(char* filePath){
-	int current_byte = global_RootStartByte;
-	int current_id = 1;
-	int cluster_id = 2; // Root dir starts at cluster 2
-	int ret_value;
+unsigned long getNextClusterNum(int currentClusterNum){
+	int tmp_byte = global_FATStartByte + 4 * currentClusterNum;
+	unsigned long a;
+//	printf("size of unsigned short = %d\n", sizeof(a));
+	if(lseek(global_fd, tmp_byte, 0) == -1) { perror("Error: getNextClusterNum()"); exit(-1);}
+	if(read(global_fd, (void *) &a, 4) == -1) { perror("Error: getNextClusterNum()"); exit(-1);}
 	
-//	printOneInfo(filePath, current_id, global_RootStartByte + 9 * 32);
+	if (a >= 268435448) return -1;
+	else return a;
+}
+
+void printAllInfo(char* filePath){
+	int current_byte;// = global_RootStartByte;
+	int current_id = 1;
+	unsigned long cluster_id = 2; // Root dir starts at cluster 2
+	int ret_value;
+	char parentFileName[12];
+	int tmp_num_of_entries;
+	int tmp_current_byte;
+	unsigned long tmp_cluster_id;
+	int tmp_EOF;
+	int num_of_entries = 0; 
+
+	do{
+	num_of_entries = 0;
+	current_byte = getStartByte(cluster_id);
 
 	while(1){
-		switch(ret_value = printOneInfo(filePath, current_id, current_byte)){
+		num_of_entries ++;
+		switch(ret_value = printOneInfo(filePath, current_id, current_byte, 0, NULL)){
 			case FLAG_EOF:
-				if (debugFlag) printf("Last entry reached\n");
+				if (debugFlag) printf("\t---> Last entry reached\n");
 				return;
 			case FLAG_Not_Printed:
 				break;
@@ -281,13 +301,41 @@ void printAllInfo(char* filePath){
 				break;
 			default:	// This is a folder; ret_val => starting address of cluster
 				current_id ++;
+				tmp_cluster_id = ret_value;
+				tmp_EOF = 0;
+				
+				if(debugFlag) printf("\t---> current: %ld\n", tmp_cluster_id);
+				if(debugFlag) printf("\t---> next   : %ld\n", getNextClusterNum(tmp_cluster_id));		
+
+				do{
+					tmp_num_of_entries = 0;
+					tmp_current_byte = getStartByte(tmp_cluster_id);
+				
+					while(1){
+						tmp_num_of_entries ++;
+						getFileName(filePath, current_byte, parentFileName);
+						switch(printOneInfo(filePath, current_id, tmp_current_byte, 1, parentFileName)){
+							case FLAG_EOF:
+								tmp_EOF = 1;
+								break;
+							case FLAG_Not_Printed:
+								break;
+							default:
+								current_id ++;
+								break;
+						}
+						tmp_current_byte += DIRENT_SIZE;
+						if(tmp_EOF) break;
+						if(tmp_num_of_entries == 16) break;
+					}
+				} while(( tmp_cluster_id = getNextClusterNum(tmp_cluster_id)) != -1);
 				break;
 		}
 		current_byte += DIRENT_SIZE;
+		if(num_of_entries == 16) break;
 	}
+
+	} while( (cluster_id = getNextClusterNum(cluster_id)) != -1);
+
 	return;	
-
 }
-
-
-
