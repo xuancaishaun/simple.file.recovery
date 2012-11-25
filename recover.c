@@ -56,7 +56,7 @@ struct BootEntry{
 
 #pragma pack(push,1)
 struct DirEntry{
-	unsigned char DIR_NAME[11];		/* File name*/
+	unsigned char DIR_Name[11];		/* File name*/
 	unsigned char DIR_Attr;
 	unsigned char DIR_NTRes;
 	unsigned char DIR_CrtTimeTenth;
@@ -134,12 +134,39 @@ void printSysInfo(char* filePath){
 	printf("Number of bytes per sector = %d\n", bootEntry->BPB_BytesPerSec);
 	printf("Number of sectors per cluster = %d\n", bootEntry->BPB_SecPerClus);
 	printf("Number of reserved sectors = %d\n", bootEntry->BPB_RsvdSecCnt);
+	
+	
+}
+
+int check_zero(struct DirEntry *tmpDir){
+	if(tmpDir->DIR_Name[0]==0 && tmpDir->DIR_Name[1]==0 && tmpDir->DIR_Attr==0 && tmpDir->DIR_NTRes==0 && tmpDir->DIR_CrtTimeTenth==0 && tmpDir->DIR_CrtTime==0)
+		return 0;
+	else return 1;
+}
+
+int check_file(char first_char, char file_attr){
+	//printf("First Char of Filename: %d\t", first_char);
+	//printf("File Attribute = %x\n", file_attr);
+	if (first_char != 0 && first_char != -27 && (file_attr+1)%16 != 0){
+		if(file_attr >= 16 && file_attr < 32)
+			return 1;
+		else if(file_attr >= 32)
+			return 2;
+	}
+	else return 0;
+}
+
+int file_cluster(char hi, char lo){
+	//printf("%x\t%x\n", hi, lo);
+	int f_cluster=0;
+	f_cluster = hi*256 + lo;
+	return f_cluster;
 }
 
 void printDirInfo(char* filePath){
 	int dd, fd;
 	struct BootEntry * bootEntry = (struct BootEntry *)malloc(sizeof(struct BootEntry));
-	//struct DirEntry * tmpDir = (struct DirEntry *)malloc(sizeof(struct DirEntry));
+	struct DirEntry * tmpDir = (struct DirEntry *)malloc(sizeof(struct DirEntry));
 	
 	// Read boot sector information
 	if((fd=open((const char *)filePath, O_RDONLY))==-1) perror("Error");
@@ -152,27 +179,43 @@ void printDirInfo(char* filePath){
 	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_RsvdSecCnt, SEEK_CUR); // Reserved area
 	//lseek(dd, bootEntry->BPB_BytesPerSec * bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs, SEEK_CUR); // FAT Areas
 
-	printf("BPB_RsvdSecCnt	: %d\n", bootEntry->BPB_RsvdSecCnt);
-	printf("BPB_RootEntCnt: %d\n", bootEntry->BPB_RootEntCnt);
-	printf("BPB_TotSec16:%d\n", bootEntry->BPB_TotSec16);
-	printf("BPB_Media	:%d\n", bootEntry->BPB_Media);
-	printf("BPB_FATSz16	:%d\n", bootEntry->BPB_FATSz16);	
-	printf("BPB_SecPerTrk	:%d\n", bootEntry->BPB_SecPerTrk);
-	printf("BPB_NumHeads	:%d\n", bootEntry->BPB_NumHeads);
-	printf("BPB_HiddSec	:%ld\n", bootEntry->BPB_HiddSec);
-	printf("BPB_TotSec32	:%ld\n", bootEntry->BPB_TotSec32);
-	printf("BPB_BkBootSec	: %d\n", bootEntry->BPB_BkBootSec);
-
+	printf("BPB_RsvdSecCnt: %d\n", bootEntry->BPB_RsvdSecCnt);
+	printf("BPB_HiddSec: %ld\n", bootEntry->BPB_HiddSec);
+	printf("BPB_FATSz32: %ld\n", bootEntry->BPB_FATSz32);
+	printf("BPB_NumFATs: %d\n", bootEntry->BPB_NumFATs);
+	printf("ByteOfRootDir: %ld\n", bootEntry->BPB_BytesPerSec * (bootEntry->BPB_HiddSec + bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs));
 	
-	//printf("BPB_HiddSec	: %ld\n", bootEntry->BPB_HiddSec);
-	printf("BPB_FATSz32	: %ld\n", bootEntry->BPB_FATSz32);
-	printf("BPB_NumFATs	: %d\n", bootEntry->BPB_NumFATs);
-	printf("ByteOfRootDir: %ld\n", bootEntry->BPB_BytesPerSec * (bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_TotSec32*bootEntry->BPB_NumFATs));
+	if( lseek(fd,(bootEntry->BPB_BytesPerSec * (bootEntry->BPB_HiddSec + bootEntry->BPB_RsvdSecCnt + bootEntry->BPB_FATSz32 	* bootEntry->BPB_NumFATs)), 0) <0 ){
+			printf("lseek error");
+	}
+	int i = 0, ret_val=0, f_cluster=0;
+	char f_name[12];
+	while (1){
+		(int)read(fd, (void *)tmpDir, (int)sizeof(struct DirEntry));
+		if (check_zero(tmpDir)==0){ break;}
+		if ( (ret_val = check_file(tmpDir->DIR_Name[0], tmpDir->DIR_Attr)) > 0) {
+			i++;
+			int j=0, k=0;
+			while(tmpDir->DIR_Name[j]!=32 && j<8){ f_name[j]=tmpDir->DIR_Name[j];j++;}
+			k=j, j=8;
+			if(ret_val==2){f_name[k] = '.'; k++;}
+			while(tmpDir->DIR_Name[j]!=32 && j<11){f_name[k]=tmpDir->DIR_Name[j];j++;k++;}
+			f_name[k]='\0';
 
-	//if(((int)read(dd, (void *)tmpDir, (int)sizeof(struct DirEntry)))==-1) { perror("Error"); return; }
-
-	//printf("1, %s, %ld, %d\n", tmpDir->DIR_NAME, tmpDir->DIR_FileSize, tmpDir->DIR_FstClusLO);
-
+			f_cluster = file_cluster(tmpDir->DIR_FstClusHI, tmpDir->DIR_FstClusLO);
+			
+			if (ret_val == 1) {	
+				printf("%d, %s/, %ld, %d\n", i, f_name, tmpDir->DIR_FileSize, f_cluster);
+			}
+			else if (ret_val == 2){
+				printf("%d, %s, %ld, %d\n", i, f_name, tmpDir->DIR_FileSize, f_cluster);
+			}
+		}
+//		else printf("Not valid!\n");
+	}
+	
 	printf("BPB_RootClus = %ld\n", bootEntry->BPB_RootClus);
 
 }
+
+
