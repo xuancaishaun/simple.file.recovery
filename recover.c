@@ -6,11 +6,16 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define debugFlag 0
+#define debugFlag 1 
 
+void initBootInfo(char* filePath); // Initialize Boot Sector Information. IMPORTANT.
 void printUsage(void);
-void printSysInfo(char* filePath);
-void printDirInfo(char* filePath);
+void printSysInfo(char* filePath); // print info. about Boot Sector.
+int  printOneInfo(char* filePath, int id, int startByte); // print info. about a single File or Folder.
+void printAllInfo(char* filePath); // print info. about File/Folder under Root and sub-root Directories.
+int  getClusNum(char hi, char lo);
+int  getStartByte(int clusterNum);
+
 
 #pragma pack(push,1)
 struct BootEntry{
@@ -56,8 +61,8 @@ struct BootEntry{
 
 #pragma pack(push,1)
 struct DirEntry{
-	unsigned char DIR_Name[11];		/* File name*/
-	unsigned char DIR_Attr;
+	unsigned char DIR_Name[11];	/* File name*/
+	unsigned char DIR_Attr;		/* File attributes*/
 	unsigned char DIR_NTRes;
 	unsigned char DIR_CrtTimeTenth;
 	unsigned short DIR_CrtTime;
@@ -67,15 +72,34 @@ struct DirEntry{
 	unsigned short DIR_WrtTime;
 	unsigned short DIR_WrtDate;
 	unsigned short DIR_FstClusLO; 	/* Low 2 bytes of the first cluster address*/
-	unsigned long DIR_FileSize;		/* File size in bytes. (0 for directories)*/
+	unsigned long DIR_FileSize;	/* File size in bytes. (0 for directories)*/
 };
 #pragma pack(pop)
 
+#define BOOT_SIZE (int)sizeof(struct BootEntry)
+#define DIRENT_SIZE (int)sizeof(struct DirEntry)
+#define FLAG_EOF -2
+#define FLAG_Not_Printed -1
+#define FLAG_FILE 0 
+
+// A list of global variables of Boot Sector
+static int 		global_initFlag = 0; // false means it has not been initialized.	
+static unsigned short	global_BytesPerSec;
+static unsigned char 	global_SecPerClus;
+static unsigned short	global_RsvdSecCnt;
+static unsigned char	global_NumFATs;
+static unsigned long	global_HiddSec;
+static unsigned long	global_FATSz32;
+static unsigned long	global_RootClus;
+static unsigned long 	global_RootStartByte;
+static unsigned long 	global_FATStartByte;
+static unsigned long 	global_FATTotalByte;
+
 int main(int argc, char **argv){
 
-/**
-* Milestone 1: Detecting valid arguments
-*/
+	/**
+	* Milestone 1: Detecting valid arguments
+	*/
 	switch (argc)
 	{
 		case 4:
@@ -85,6 +109,7 @@ int main(int argc, char **argv){
 					* Milestone 2: Printing file system information
 					*/	
 					// Example: ./revover -d fat32.disk -i
+					initBootInfo(argv[2]);
 					printSysInfo(argv[2]);
 					return 0;
 				}
@@ -93,7 +118,8 @@ int main(int argc, char **argv){
 					* Milestone 3: Listing all directory entries
 					*/
 					// Example: ./recover -d fat32.disk -l
-					printDirInfo(argv[2]);
+					initBootInfo(argv[2]);
+					printAllInfo(argv[2]);
 					return 0;
 				}
 			}
@@ -104,6 +130,7 @@ int main(int argc, char **argv){
 				printf("-r detected\n");
 				// Example; ./recover -d fat32.disk -r [filename]
 				// do something
+				initBootInfo(argv[2]);
 				return 0;
 			}
 			break;
@@ -114,6 +141,28 @@ int main(int argc, char **argv){
 	return 0;
 }
 
+void initBootInfo(char * filePath){	// Used to initialize information about boot sector
+	// Must be called
+	int fd;
+	struct BootEntry * bootEntry = (struct BootEntry *) malloc(BOOT_SIZE);
+	if((fd = open((const char *) filePath, O_RDONLY)) == -1) { perror("Error: fail to read info. about Boot Sector"); exit(-1);}
+	if((int)read(fd, (void *)bootEntry, BOOT_SIZE) == -1) {perror("Error: fail to read info. about Boot Sector"); exit(-1);}
+	global_initFlag    = 1;
+	global_BytesPerSec = bootEntry->BPB_BytesPerSec;
+	global_SecPerClus  = bootEntry->BPB_SecPerClus;
+	global_RsvdSecCnt  = bootEntry->BPB_RsvdSecCnt;
+	global_NumFATs     = bootEntry->BPB_NumFATs;
+	global_HiddSec     = bootEntry->BPB_HiddSec;
+	global_FATSz32     = bootEntry->BPB_FATSz32;
+	global_RootClus    = bootEntry->BPB_RootClus;
+	global_RootStartByte = global_BytesPerSec * (global_HiddSec + global_RsvdSecCnt + global_NumFATs * global_FATSz32);
+	global_FATStartByte  = global_RsvdSecCnt * global_BytesPerSec;
+	global_FATTotalByte  = global_FATSz32 * global_BytesPerSec;
+	if (debugFlag) printf("RootStartByte = %ld\n", global_RootStartByte);
+	if (debugFlag) printf("FATStartByte = %ld\n", global_FATStartByte);
+	if (debugFlag) printf("FATTotalByte = %ld\n", global_FATTotalByte);
+}
+
 void printUsage(void){
 	printf("Usage: ./recover -d [device filename] [other arugments]\n");
 	printf("-i			Print boot sector information\n");
@@ -122,26 +171,67 @@ void printUsage(void){
 }
 
 void printSysInfo(char* filePath){
-	int fd;
-	struct BootEntry * bootEntry = (struct BootEntry *)malloc(sizeof(struct BootEntry));
-	
-	if((fd=open((const char *)filePath, O_RDONLY))==-1) perror("Error");
-	if (debugFlag) printf("Device file: %s\n", filePath);
-	if (debugFlag) printf("The size of BootEntry: %d\n", (int)sizeof(struct BootEntry));
-	if((int)read(fd, (void *) bootEntry, sizeof(struct BootEntry))==-1) perror("Error");
-
-	printf("Number of FATs = %d\n", bootEntry->BPB_NumFATs);
-	printf("Number of bytes per sector = %d\n", bootEntry->BPB_BytesPerSec);
-	printf("Number of sectors per cluster = %d\n", bootEntry->BPB_SecPerClus);
-	printf("Number of reserved sectors = %d\n", bootEntry->BPB_RsvdSecCnt);
-	
-	
+	if(!global_initFlag) initBootInfo(filePath);	
+	printf("Number of FATs = %d\n", global_NumFATs);
+	printf("Number of bytes per sector = %d\n", global_BytesPerSec);
+	printf("Number of sectors per cluster = %d\n", global_SecPerClus);
+	printf("Number of reserved sectors = %d\n", global_RsvdSecCnt);
 }
 
-int check_zero(struct DirEntry *tmpDir){
-	if(tmpDir->DIR_Name[0]==0 && tmpDir->DIR_Name[1]==0 && tmpDir->DIR_Attr==0 && tmpDir->DIR_NTRes==0 && tmpDir->DIR_CrtTimeTenth==0 && tmpDir->DIR_CrtTime==0)
-		return 0;
-	else return 1;
+int printOneInfo(char* filePath, int id, int startByte){
+	// Example: 1, MAKEFILE, 21, 11
+	int fd;
+	struct DirEntry * tmp = (struct DirEntry *)malloc(DIRENT_SIZE);
+	
+	if((fd = open((const char*)filePath, O_RDONLY)) == -1) {perror("Error: printOneInfo()"); exit(-1);}
+	if(lseek(fd, startByte, 0) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+	if(read(fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+	
+	// Requirement A: check if this is the last entry in Root directory
+	if(tmp->DIR_Name[0] == 0) {
+		return FLAG_EOF;
+	}
+
+	// Requirement B: check if this entry is deleted or not.
+	if(tmp->DIR_Name[0] == 229){	// 229 <==> 0xE5 ==> dot
+		return FLAG_Not_Printed; 
+	}
+
+	// Requirement C: check if this is LFN or not.
+	if(tmp->DIR_Attr == 15){	// 15 <==> 0x0F ==> Long File Name, just ignore
+		return FLAG_Not_Printed;
+	}
+
+	// Requirement D: 
+	// File => FileName.Extension
+	int clusNum = getClusNum(tmp->DIR_FstClusHI, tmp->DIR_FstClusLO);	
+	char fileName[12];
+	int j = 0, k = 0;
+	while(tmp->DIR_Name[j] != 32 && j < 8) fileName[k++] = tmp->DIR_Name[j++]; 
+	if(tmp->DIR_Attr / 16 % 2 == 0) fileName[k++] = '.';
+	j = 8;
+	while(tmp->DIR_Name[j] != 32 && j < 11) fileName[k++] = tmp->DIR_Name[j++];
+	fileName[k] = '\0';
+
+	if(tmp->DIR_Attr / 16 % 2 == 0){ // xxx0 xxxx ==> this is a File.
+		printf("%d, %s, %ld, %d\n", id, fileName, tmp->DIR_FileSize, clusNum);
+		return FLAG_FILE;
+	}else{	
+		// Folder
+		//    => Folder/, 0, StartClus
+		//    => Folder/., 0, StartClus
+		//    => Folder/.., 0, 0
+		printf("%d, %s/, 0, %d\n", id, fileName, clusNum);
+		printf("%d, %s/., 0, %d\n", id + 1, fileName, clusNum);
+		printf("%d, %s/.., 0, 0\n", id + 2, fileName);
+		return clusNum;
+	}
+	/* IMPORTANT Note for return value*/
+	// return value:
+	//	(a) FLAG_EOF: last entry in Root directory
+	//	(b) FLAG_Not_Printed: this entry is not printed and do not increase id.
+	//	(c) FLAG_FILE: this entry is a file
+	//	(d) Values > 1: this is a sub-directory and its starting cluster is Return Value. 
 }
 
 int check_file(char first_char, char file_attr){
@@ -156,14 +246,26 @@ int check_file(char first_char, char file_attr){
 	else return 0;
 }
 
-int file_cluster(char hi, char lo){
-	//printf("%x\t%x\n", hi, lo);
-	int f_cluster=0;
+int getClusNum(char hi, char lo){
+	// Covert to Cluster Number from its Higher and Lower 2 bytes
+	int f_cluster = 0;
 	f_cluster = hi*256 + lo;
 	return f_cluster;
 }
 
-void printDirInfo(char* filePath){
+int getStartByte(int clusternum){
+	// Data clusters start at data area and the 1st cluster is Cluster 2.
+	return (global_RootStartByte + (clusternum-2) * global_SecPerClus * global_BytesPerSec);
+}
+
+void printAllInfo(char* filePath){
+	int current_byte = global_RootStartByte;
+	int order_id = 1;
+	
+		
+	
+	if(printOneInfo(filePath, 1, global_RootStartByte)==FLAG_FILE) printf("This is a file\n");
+
 	int dd, fd;
 	struct BootEntry * bootEntry = (struct BootEntry *)malloc(sizeof(struct BootEntry));
 	struct DirEntry * tmpDir = (struct DirEntry *)malloc(sizeof(struct DirEntry));
@@ -192,7 +294,7 @@ void printDirInfo(char* filePath){
 	char f_name[12];
 	while (1){
 		(int)read(fd, (void *)tmpDir, (int)sizeof(struct DirEntry));
-		if (check_zero(tmpDir)==0){ break;}
+//		if (check_zero(tmpDir)==0){ break;}
 		if ( (ret_val = check_file(tmpDir->DIR_Name[0], tmpDir->DIR_Attr)) > 0) {
 			i++;
 			int j=0, k=0;
@@ -202,7 +304,7 @@ void printDirInfo(char* filePath){
 			while(tmpDir->DIR_Name[j]!=32 && j<11){f_name[k]=tmpDir->DIR_Name[j];j++;k++;}
 			f_name[k]='\0';
 
-			f_cluster = file_cluster(tmpDir->DIR_FstClusHI, tmpDir->DIR_FstClusLO);
+			f_cluster = getClusNum(tmpDir->DIR_FstClusHI, tmpDir->DIR_FstClusLO);
 			
 			if (ret_val == 1) {	
 				printf("%d, %s/, %ld, %d\n", i, f_name, tmpDir->DIR_FileSize, f_cluster);
