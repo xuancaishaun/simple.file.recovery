@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#define debugFlag 1 
+#define debugFlag 0 
 
 // If a variable could have neative values, then use int.
 // otherwise, use signed long.
@@ -20,12 +20,13 @@ unsigned long  getClusNum(unsigned short hi, unsigned short lo);
 unsigned long  getStartByte(unsigned long clusterNum);
 void getFileName(char* filePath, unsigned long startByte, char* fileName);
 unsigned long  getNextClusterNum(unsigned long currentClusterNum);
-unsigned long  searchFileName(char * filePath, char * namePart, char * extPart);
+unsigned long  searchFileName(char * filePath, unsigned long cluster_id, int dirDepth, char * namePart, char * extPart);
 unsigned long  getNameExtParts(char * filePath, unsigned long startByte, char * NamePart, char * ExtPart);
 unsigned long  isEntryFile(char * filePath, unsigned long startByte);
 unsigned long  isEntryDeleted(char * filePath, unsigned long startByte);
 unsigned long  isEntryLFN(char * filePath, unsigned long startByte);
 unsigned long  isEntryEOF(char * filePath, unsigned long startByte);
+unsigned long  getClusterID(char * filePath, unsigned long startByte);
 
 #pragma pack(push,1)
 struct BootEntry{
@@ -88,9 +89,9 @@ struct DirEntry{
 
 #define BOOT_SIZE (unsigned long)sizeof(struct BootEntry)
 #define DIRENT_SIZE (unsigned long)sizeof(struct DirEntry)
-#define FLAG_EOF (unsigned long)0
-#define FLAG_Not_Printed (unsigned long)1
-#define FLAG_FILE (unsigned long)2	//These flags have to be non-negative
+#define FLAG_EOF -1
+#define FLAG_Not_Printed -2
+#define FLAG_FILE -3	//These flags have to be non-negative
 
 // A list of global variables of Boot Sector
 static int 		global_initFlag = 0; // false means it has not been initialized.	
@@ -130,6 +131,7 @@ int main(int argc, char **argv){
 					*/
 					// Example: ./recover -d fat32.disk -l
 					initBootInfo(argv[2]);
+					if( debugFlag)	printf("%ld\n", getStartByte(3));
 					printAllInfo(argv[2]);
 					return 0;
 				}
@@ -147,18 +149,28 @@ int main(int argc, char **argv){
 				char *token;
 				token  = strtok(argv[4], ".");
 				if (token != NULL)
-					strcpy( inputName, (const char *) token);
+					strncpy( inputName, (const char *) token, 8);
 				if (debugFlag) printf("Input Name: %s\n", inputName);
 				
 				token = strtok(NULL, " ");
 				if (token != NULL)
-					strcpy( inputExt, (const char *) token);
+					strncpy( inputExt, (const char *) token, 3);
 				if (debugFlag) printf("Input Ext : %s\n", inputExt);
 			
 				// Convert all alphabets to Uppaer Case.
-	
-				
-				printf("Cluster No. = %ld\n", searchFileName(argv[2], "DIR_B", ""));
+				int i;
+				for ( i = 0; i < 9; i++){
+					if(isalpha(inputName[i]) && islower(inputName[i])) inputName[i] = inputName[i] - 32; 
+				}
+
+				for ( i = 0; i < 4; i++){
+					if(isalpha(inputExt[i]) && islower(inputExt[i])) inputExt[i] = inputExt[i] - 32;
+				}
+			
+				if (debugFlag) printf("Input Name: %s\n", inputName);
+				if (debugFlag) printf("Input Ext : %s\n", inputExt);
+			
+				printf("Cluster No. = %ld\n", searchFileName(argv[2], 2, 2, inputName, inputExt));
 
 				return 0;
 			}
@@ -207,17 +219,19 @@ void printSysInfo(char* filePath){
 	printf("Number of reserved sectors = %d\n", global_RsvdSecCnt);
 }
 
-unsigned long searchFileName(char * filePath, char * namePart, char * extPart){
-	char target_namePart[9];// 8 char + '\0';	MAX_SIZE of namePart = 9, including '\0'
-	char target_extPart[4]; // 3 char + '\0';	MAX_SIZE of  extPart = 4, including '\0'
+unsigned long searchFileName(char * filePath, unsigned long cluster_id, int dirDepth, char * namePart, char * extPart){
+//	char target_namePart[9];// 8 char + '\0';	MAX_SIZE of namePart = 9, including '\0'
+//	char target_extPart[4]; // 3 char + '\0';	MAX_SIZE of  extPart = 4, including '\0'
 	char tmp_namePart[9];
 	char tmp_extPart[4];
-	strncpy(target_namePart, (const char*) namePart, 9);
-	strncpy(target_extPart, (const char*) extPart, 4);
+//	strncpy(target_namePart, (const char*) namePart, 9);
+//	strncpy(target_extPart, (const char*) extPart, 4);
+	char * target_namePart = namePart;
+	char * target_extPart  = extPart;
 
 	unsigned long current_order_id;
 	unsigned long current_byte;
-	unsigned long cluster_id = 2;
+	//unsigned long cluster_id = 2;
 	unsigned long num_of_entries;
 	unsigned long sub_current_byte;
 	unsigned long sub_cluster_id;
@@ -225,7 +239,9 @@ unsigned long searchFileName(char * filePath, char * namePart, char * extPart){
 	unsigned int  sub_EOF_Flag;
 
 	unsigned long cluster_num = 0;
-
+	// This variable indicates the depth of directories
+	// dirDepth = 2: (1) Root Directory (2) Sub-root Directory
+	dirDepth -- ;
 
 	do{
 		num_of_entries = 0;	
@@ -237,10 +253,10 @@ unsigned long searchFileName(char * filePath, char * namePart, char * extPart){
 			if(isEntryEOF(filePath, current_byte))
 				return cluster_num;
 
-			//if(isEntryFile(filePath, current_byte) && isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){			
-
-			if(isEntryFile(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){
+		//	if(isEntryFile(filePath, current_byte) && isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){	
+			if(isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){
 				cluster_num = getNameExtParts( filePath, current_byte, tmp_namePart, tmp_extPart);
+				
 				if (debugFlag){
 					printf("\t-------------------------\n");
 					printf("\t---> Target Name Part: %s\n", target_namePart);
@@ -251,7 +267,13 @@ unsigned long searchFileName(char * filePath, char * namePart, char * extPart){
 
 				if(strcmp(target_namePart, tmp_namePart) == 0 && strcmp(target_extPart, tmp_extPart) == 0){
 					return cluster_num;
+				}else{
+					cluster_num = 0;
 				}
+
+			}else if(dirDepth && !isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte)){
+				cluster_num = searchFileName(filePath, getClusterID(filePath, current_byte), dirDepth, namePart, extPart);
+				if (cluster_num != 0) return cluster_num;
 			}
 
 			current_byte += DIRENT_SIZE;
@@ -308,6 +330,16 @@ unsigned long isEntryLFN(char * filePath, unsigned long startByte){
         else { free(tmp); return 0;}
 }
 
+unsigned long getClusterID(char * filePath, unsigned long startByte){
+	struct DirEntry* tmp = (struct DirEntry *) malloc(DIRENT_SIZE);
+        if(lseek(global_fd, startByte, 0) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+        if(read(global_fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+
+        unsigned long cluster_id = getClusNum(tmp->DIR_FstClusHI, tmp->DIR_FstClusLO);
+	free(tmp);
+	return cluster_id;
+}
+
 
 unsigned long printOneInfo(char* filePath, unsigned long id, unsigned long startByte, int subFlag, char* parentDirName){
 	// Example: 1, MAKEFILE, 21, 11
@@ -317,7 +349,7 @@ unsigned long printOneInfo(char* filePath, unsigned long id, unsigned long start
 	if(read(global_fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
 	
 	// Requirement A: check if this is the last entry in Root directory
-	if(tmp->DIR_Name[0] == 0) {	// 0  <==> 0x00
+	if((tmp->DIR_Name[0] == 0) && (tmp->DIR_Name[1] == 0)) {	// 0  <==> 0x00
 		if(debugFlag) printf("\t---> FLAG_EOF reached \n");
 		return FLAG_EOF;
 	}
@@ -330,7 +362,11 @@ unsigned long printOneInfo(char* filePath, unsigned long id, unsigned long start
 
 	// Requirement C: check if this is LFN or not.
 	if(tmp->DIR_Attr == 15){	// 15 <==> 0x0F ==> Long File Name, just ignore
-		if(debugFlag) printf("\t---> LFN reached\n");
+		if(debugFlag) {
+			char fileName_tmp[12];
+			getFileName(filePath, startByte, fileName_tmp);
+			printf("\t---> LFN reached: %s\n", fileName_tmp);
+		}
 		return FLAG_Not_Printed;
 	}
 
@@ -359,7 +395,7 @@ unsigned long printOneInfo(char* filePath, unsigned long id, unsigned long start
 	//	(a) FLAG_EOF: last entry in Root directory
 	//	(b) FLAG_Not_Printed: this entry is not printed and do not increase id.
 	//	(c) FLAG_FILE: this entry is a file
-	//	(d) Values > 1: this is a sub-directory and its starting cluster is Return Value. 
+	//	(d) Values >= 0: this is a sub-directory and its starting cluster is Return Value. 
 
 	if (debugFlag) printf("WTF\n");
 }
@@ -466,7 +502,6 @@ void printAllInfo(char* filePath){
 				
 				if(debugFlag) printf("\t---> current: %ld\n", tmp_cluster_id);
 				if(debugFlag) printf("\t---> next   : %ld\n", getNextClusterNum(tmp_cluster_id));		
-
 				do{
 					tmp_num_of_entries = 0;
 					tmp_current_byte = getStartByte(tmp_cluster_id);
@@ -484,11 +519,13 @@ void printAllInfo(char* filePath){
 								current_id ++;
 								break;
 						}
+						if (debugFlag) printf("\t---> Sub Current Byte: %ld\n", tmp_current_byte);
 						tmp_current_byte += DIRENT_SIZE;
-						if(tmp_EOF) break;
+						if(tmp_EOF == 1) break;
 						if(tmp_num_of_entries == 16) break;
 					}
 				} while(( tmp_cluster_id = getNextClusterNum(tmp_cluster_id)) != -1);
+
 				break;
 		}
 		current_byte += DIRENT_SIZE;
