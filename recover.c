@@ -27,6 +27,9 @@ unsigned long  isEntryDeleted(char * filePath, unsigned long startByte);
 unsigned long  isEntryLFN(char * filePath, unsigned long startByte);
 unsigned long  isEntryEOF(char * filePath, unsigned long startByte);
 unsigned long  getClusterID(char * filePath, unsigned long startByte);
+int changeFAT(char * filePath, unsigned long cluster_id, unsigned long next_cluster_id);
+void recoverFile(char * filePath, unsigned long start_cluster_id);
+unsigned long  getFileSize(char * filePath, unsigned long startByte);
 
 #pragma pack(push,1)
 struct BootEntry{
@@ -92,6 +95,9 @@ struct DirEntry{
 #define FLAG_EOF -1
 #define FLAG_Not_Printed -2
 #define FLAG_FILE -3	//These flags have to be non-negative
+
+#define FLAG_FAT_CHANGE_FAIL 1
+#define FLAG_FAT_CHANGE_SUCC 2
 
 // A list of global variables of Boot Sector
 static int 		global_initFlag = 0; // false means it has not been initialized.	
@@ -166,11 +172,19 @@ int main(int argc, char **argv){
 				for ( i = 0; i < 4; i++){
 					if(isalpha(inputExt[i]) && islower(inputExt[i])) inputExt[i] = inputExt[i] - 32;
 				}
+		
+				// Covert the 1st one to 0xE5				
+				inputName[0] = 229;
+				
+				if (debugFlag) printf("Modified Input Name: %s\n", inputName);
+				if (debugFlag) printf("Modified Input Ext : %s\n", inputExt);
 			
-				if (debugFlag) printf("Input Name: %s\n", inputName);
-				if (debugFlag) printf("Input Ext : %s\n", inputExt);
-			
-				printf("Cluster No. = %ld\n", searchFileName(argv[2], 2, 2, inputName, inputExt));
+				unsigned long clusterNum =  searchFileName(argv[2], 2, 2, inputName, inputExt);
+
+				if (clusterNum == 0) printf("%s: error - file not found\n", argv[2]);
+				else{
+					if ( debugFlag) printf("\t===> File found: %ld\n", clusterNum);
+				}
 
 				return 0;
 			}
@@ -208,7 +222,7 @@ void printUsage(void){
 	printf("Usage: ./recover -d [device filename] [other arugments]\n");
 	printf("-i			Print boot sector information\n");
 	printf("-l			List all the directory entries\n");
-	printf("-r filename [-m md5]	File recovery\n");
+	printf("-r filename 		File recovery\n");
 }
 
 void printSysInfo(char* filePath){
@@ -253,8 +267,8 @@ unsigned long searchFileName(char * filePath, unsigned long cluster_id, int dirD
 			if(isEntryEOF(filePath, current_byte))
 				return cluster_num;
 
-		//	if(isEntryFile(filePath, current_byte) && isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){	
-			if(isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){
+			if(isEntryFile(filePath, current_byte) && isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){	
+		//	if(isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){
 				cluster_num = getNameExtParts( filePath, current_byte, tmp_namePart, tmp_extPart);
 				
 				if (debugFlag){
@@ -340,6 +354,29 @@ unsigned long getClusterID(char * filePath, unsigned long startByte){
 	return cluster_id;
 }
 
+int changeFAT(char * filePath, unsigned long cluster_id, unsigned long next_cluster_id){
+	
+	unsigned long buf;
+	unsigned long offset = global_FATStartByte + 4 * cluster_id;
+	if(lseek(global_fd, offset, 0) == -1) { perror("Error: seek error"); exit(-1);}
+	if((int)read(global_fd, &buf, 4) == -1){ perror("Error: read"); exit(-1);}
+
+	// if FAT entry is occupied (not zero), than recover failed
+	if(buf != 0) return FLAG_FAT_CHANGE_FAIL;
+
+	if(lseek(global_fd, offset, 0) == -1) { perror("Error: seek error"); exit(-1);}
+	if(write(global_fd, &next_cluster_id, 4) == -1) { perror("Error: fail to write"); exit(-1);}
+
+	return FLAG_FAT_CHANGE_SUCC;
+}
+
+void recoverFile(char * filePath, unsigned long start_cluster_id){
+//	unsigned long x = 
+}
+
+unsigned long getFileSize(char * filePath, unsigned long startByte){
+	return 0;
+}
 
 unsigned long printOneInfo(char* filePath, unsigned long id, unsigned long startByte, int subFlag, char* parentDirName){
 	// Example: 1, MAKEFILE, 21, 11
