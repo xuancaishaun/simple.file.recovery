@@ -28,7 +28,7 @@ unsigned long  isEntryLFN(char * filePath, unsigned long startByte);
 unsigned long  isEntryEOF(char * filePath, unsigned long startByte);
 unsigned long  getClusterID(char * filePath, unsigned long startByte);
 int changeFAT(char * filePath, unsigned long cluster_id, unsigned long next_cluster_id);
-void recoverFile(char * filePath, unsigned long start_cluster_id);
+int recoverFile(char * filePath, unsigned long start_cluster_id);
 unsigned long  getFileSize(char * filePath, unsigned long startByte);
 
 #pragma pack(push,1)
@@ -99,10 +99,16 @@ struct DirEntry{
 #define FLAG_FAT_CHANGE_FAIL 1
 #define FLAG_FAT_CHANGE_SUCC 2
 
+#define FLAG_SEARCH_NOT_FOUND -1
+
+#define SEARCH_DIR_DEPTH 2
+#define SEARCH_ROOT_DIR 0
+
 // A list of global variables of Boot Sector
 static int 		global_initFlag = 0; // false means it has not been initialized.	
 static unsigned short	global_BytesPerSec;
 static unsigned char 	global_SecPerClus;
+static unsigned long 	global_BytesPerClus;
 static unsigned short	global_RsvdSecCnt;
 static unsigned char	global_NumFATs;
 static unsigned long	global_HiddSec;
@@ -112,82 +118,117 @@ static unsigned long 	global_RootStartByte;
 static unsigned long 	global_FATStartByte;
 static unsigned long 	global_FATTotalByte;
 static int		global_fd;
+static unsigned long    global_fileSize;
+static char 		global_parentDir[12] = {'\0'};
+static unsigned long    global_targetStartByte;
+static int 		global_targetDirDepth;
 
 int main(int argc, char **argv){
 
 	/**
 	* Milestone 1: Detecting valid arguments
 	*/
+	char * input_deviceName;
+	char * input_fileName;	
+
 	switch (argc)
 	{
 		case 4:
-			if (strcmp(argv[1], "-d") == 0){
-				if (strcmp(argv[3], "-i") == 0){
-					/**
-					* Milestone 2: Printing file system information
-					*/	
-					// Example: ./revover -d fat32.disk -i
-					initBootInfo(argv[2]);
-					printSysInfo(argv[2]);
-					return 0;
-				}
-				else if (strcmp(argv[3], "-l") == 0){
-					/**
-					* Milestone 3: Listing all directory entries
-					*/
-					// Example: ./recover -d fat32.disk -l
-					initBootInfo(argv[2]);
-					if( debugFlag)	printf("%ld\n", getStartByte(3));
-					printAllInfo(argv[2]);
-					return 0;
-				}
-			}
-			break;
+			/**
+                        * Milestone 2: Printing file system information
+                        */
+                        // Example: ./revover -d fat32.disk -i
+                        // Example: ./recover -i -d fat32.disk
+			// Example: ./revover -d fat32.disk -l
+                        // Example: ./recover -l -d fat32.disk
+
+			if (strcmp(argv[1], "-d") == 0 && strcmp(argv[3], "-i") == 0){
+				initBootInfo(argv[2]);
+				printSysInfo(argv[2]);
+				return 0;
+			}else if (strcmp(argv[1], "-d") == 0 && strcmp(argv[3], "-l") == 0){
+				initBootInfo(argv[2]);
+                                if(debugFlag)  printf("%ld\n", getStartByte(3));
+                                printAllInfo(argv[2]);
+                                return 0;
+			}else if (strcmp(argv[1], "-i") == 0 && strcmp(argv[2], "-d") == 0){
+                                initBootInfo(argv[3]);
+                                printSysInfo(argv[3]);
+                                return 0;
+                        }else if (strcmp(argv[1], "-l") == 0 && strcmp(argv[2], "-d") == 0){
+                                initBootInfo(argv[3]);
+                                if(debugFlag) printf("%ld\n", getStartByte(3));
+                                printAllInfo(argv[3]);
+                                return 0;
+                        }else break;
 
 		case 5:
-			if ((strcmp(argv[1], "-d") == 0)&&(strcmp(argv[3], "-r") == 0)){
-				// Example; ./recover -d fat32.disk -r [filename]
-				// do something
-				initBootInfo(argv[2]);
-
-				char inputName[9] = {'\0'};
-				char inputExt[4] = {'\0'};
-				char *token;
-				token  = strtok(argv[4], ".");
-				if (token != NULL)
-					strncpy( inputName, (const char *) token, 8);
-				if (debugFlag) printf("Input Name: %s\n", inputName);
+			if (((strcmp(argv[1], "-d") == 0)&&(strcmp(argv[3], "-r") == 0)) || ((strcmp(argv[1], "-r") == 0)&&(strcmp(argv[3], "-d") == 0))){
+				if (strcmp(argv[1], "-d") == 0){
+					input_deviceName = argv[2];
+					input_fileName = argv[4];
+				}else{
+					input_deviceName = argv[4];
+                                        input_fileName = argv[2];
+				}
 				
-				token = strtok(NULL, " ");
-				if (token != NULL)
-					strncpy( inputExt, (const char *) token, 3);
-				if (debugFlag) printf("Input Ext : %s\n", inputExt);
-			
-				// Convert all alphabets to Uppaer Case.
-				int i;
-				for ( i = 0; i < 9; i++){
-					if(isalpha(inputName[i]) && islower(inputName[i])) inputName[i] = inputName[i] - 32; 
-				}
+				initBootInfo(input_deviceName);
 
-				for ( i = 0; i < 4; i++){
-					if(isalpha(inputExt[i]) && islower(inputExt[i])) inputExt[i] = inputExt[i] - 32;
-				}
+                                char inputName[9] = {'\0'};
+                                char inputExt[4] = {'\0'};
+                                char fstChar;
+                                char *token;
+                                token  = strtok(input_fileName, ".");
+                                if (token != NULL)
+                                        strncpy( inputName, (const char *) token, 8);
+                                if (debugFlag) printf("Input Name: %s\n", inputName);
+
+                                token = strtok(NULL, " ");
+                                if (token != NULL)
+                                        strncpy( inputExt, (const char *) token, 3);
+                                if (debugFlag) printf("Input Ext : %s\n", inputExt);
+
+                                // Convert all alphabets to Uppaer Case.
+                                int i;
+                                for ( i = 0; i < 9; i++){
+                                        if(isalpha(inputName[i]) && islower(inputName[i])) inputName[i] = inputName[i] - 32;
+                                }
+
+                                for ( i = 0; i < 4; i++){
+                                        if(isalpha(inputExt[i]) && islower(inputExt[i])) inputExt[i] = inputExt[i] - 32;
+                                }
+
+                                // Covert the 1st one to 0xE5
+                                fstChar = inputName[0];
+                                inputName[0] = 229;
+
+                                if (debugFlag) printf("Modified Input Name: %s\n", inputName);
+                                if (debugFlag) printf("Modified Input Ext : %s\n", inputExt);
 		
-				// Covert the 1st one to 0xE5				
-				inputName[0] = 229;
-				
-				if (debugFlag) printf("Modified Input Name: %s\n", inputName);
-				if (debugFlag) printf("Modified Input Ext : %s\n", inputExt);
-			
-				unsigned long clusterNum =  searchFileName(argv[2], 2, 2, inputName, inputExt);
+				unsigned long clusterNum =  searchFileName(input_deviceName, 2, SEARCH_ROOT_DIR, inputName, inputExt);
 
-				if (clusterNum == 0) printf("%s: error - file not found\n", argv[2]);
-				else{
-					if ( debugFlag) printf("\t===> File found: %ld\n", clusterNum);
-				}
+                                if (clusterNum == FLAG_SEARCH_NOT_FOUND) printf("%s: error - file not found\n", input_fileName);
+                                else{
+                                        if ( debugFlag) printf("\t===> File found:cluster id=%ld, file size=%ld\n", clusterNum, global_fileSize);
+                                        if ( clusterNum != 0 && recoverFile(input_deviceName, clusterNum) == -1)
+                                                printf("%s: error - fail to recover\n", input_fileName);
+                                        else {
+                                                if( lseek(global_fd, global_targetStartByte, 0) == -1) { perror("Error: recover()"); exit(-1);}
+                                                if( write(global_fd, &fstChar, 1) == -1) { perror("Error: recover()"); exit(-1);}
 
-				return 0;
+                                                if( global_targetDirDepth == 0)
+                                                        printf("%s: recovered in /\n", input_fileName);
+                                                else{
+                                                        printf("%s: recovered in /%s\n", input_fileName, global_parentDir);
+                                                }
+                                                if (debugFlag) printf("\t---> target start byte = %ld, file size = %ld\n", global_targetStartByte, global_fileSize);
+                                        }
+                                }
+
+                                return 0;
 			}
+			break;			
+		default:
 			break;
 	}
 
@@ -199,7 +240,7 @@ int main(int argc, char **argv){
 void initBootInfo(char * filePath){	// Used to initialize information about boot sector
 	// Must be called
 	struct BootEntry * bootEntry = (struct BootEntry *) malloc(BOOT_SIZE);
-	if((global_fd = open((const char *) filePath, O_RDONLY)) == -1) { perror("Error: fail to read info. about Boot Sector"); exit(-1);}
+	if((global_fd = open((const char *) filePath, O_RDWR)) == -1) { perror("Error: fail to read info. about Boot Sector"); exit(-1);}
 	if((int)read(global_fd, (void *)bootEntry, BOOT_SIZE) == -1) {perror("Error: fail to read info. about Boot Sector"); exit(-1);}
 	global_initFlag    = 1;
 	global_BytesPerSec = bootEntry->BPB_BytesPerSec;
@@ -209,6 +250,7 @@ void initBootInfo(char * filePath){	// Used to initialize information about boot
 	global_HiddSec     = bootEntry->BPB_HiddSec;
 	global_FATSz32     = bootEntry->BPB_FATSz32;
 	global_RootClus    = bootEntry->BPB_RootClus;
+	global_BytesPerClus= global_BytesPerSec * global_SecPerClus;
 	global_RootStartByte = global_BytesPerSec * (global_HiddSec + global_RsvdSecCnt + global_NumFATs * global_FATSz32);
 	global_FATStartByte  = global_RsvdSecCnt * global_BytesPerSec;
 	global_FATTotalByte  = global_FATSz32 * global_BytesPerSec;
@@ -220,9 +262,9 @@ void initBootInfo(char * filePath){	// Used to initialize information about boot
 
 void printUsage(void){
 	printf("Usage: ./recover -d [device filename] [other arugments]\n");
-	printf("-i			Print boot sector information\n");
-	printf("-l			List all the directory entries\n");
-	printf("-r filename 		File recovery\n");
+	printf("-i                    Print boot sector information\n");
+	printf("-l                    List all the directory entries\n");
+	printf("-r filename           File recovery\n");
 }
 
 void printSysInfo(char* filePath){
@@ -252,10 +294,12 @@ unsigned long searchFileName(char * filePath, unsigned long cluster_id, int dirD
 	unsigned long sub_num_of_entries;
 	unsigned int  sub_EOF_Flag;
 
-	unsigned long cluster_num = 0;
+	unsigned long cluster_num = FLAG_SEARCH_NOT_FOUND;
 	// This variable indicates the depth of directories
 	// dirDepth = 2: (1) Root Directory (2) Sub-root Directory
-	dirDepth -- ;
+	
+	global_targetDirDepth = dirDepth;
+	dirDepth ++ ;
 
 	do{
 		num_of_entries = 0;	
@@ -268,7 +312,7 @@ unsigned long searchFileName(char * filePath, unsigned long cluster_id, int dirD
 				return cluster_num;
 
 			if(isEntryFile(filePath, current_byte) && isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){	
-		//	if(isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte) && !isEntryLFN(filePath, current_byte)){
+				//**********************************************************************************************
 				cluster_num = getNameExtParts( filePath, current_byte, tmp_namePart, tmp_extPart);
 				
 				if (debugFlag){
@@ -278,16 +322,22 @@ unsigned long searchFileName(char * filePath, unsigned long cluster_id, int dirD
 					printf("\t---> Source Name Part: %s\n", tmp_namePart);
 					printf("\t---> Source Ext  Part: %s\n", tmp_extPart);
 				}
-
+				
 				if(strcmp(target_namePart, tmp_namePart) == 0 && strcmp(target_extPart, tmp_extPart) == 0){
+					global_fileSize = getFileSize(filePath, current_byte);
+					global_targetStartByte = current_byte;					
 					return cluster_num;
 				}else{
-					cluster_num = 0;
+					cluster_num = FLAG_SEARCH_NOT_FOUND;
 				}
+				//*************************************************************************************************
 
-			}else if(dirDepth && !isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte)){
+			}else if( (dirDepth < SEARCH_DIR_DEPTH) && !isEntryFile(filePath, current_byte) && !isEntryDeleted(filePath, current_byte)){
 				cluster_num = searchFileName(filePath, getClusterID(filePath, current_byte), dirDepth, namePart, extPart);
-				if (cluster_num != 0) return cluster_num;
+				if (cluster_num != FLAG_SEARCH_NOT_FOUND) {
+					getFileName(filePath, current_byte, global_parentDir);
+					return cluster_num;
+				}
 			}
 
 			current_byte += DIRENT_SIZE;
@@ -370,12 +420,33 @@ int changeFAT(char * filePath, unsigned long cluster_id, unsigned long next_clus
 	return FLAG_FAT_CHANGE_SUCC;
 }
 
-void recoverFile(char * filePath, unsigned long start_cluster_id){
-//	unsigned long x = 
+int recoverFile(char * filePath, unsigned long start_cluster_id){
+	unsigned long currentClusterId = start_cluster_id;
+	unsigned long totalCluster;
+	int i;
+	if(global_fileSize % global_BytesPerClus == 0) totalCluster = global_fileSize / global_BytesPerClus;
+	else totalCluster = global_fileSize / global_BytesPerClus + 1;
+
+	for ( i = 0; i < totalCluster - 1; i ++){
+		if (changeFAT(filePath, currentClusterId, currentClusterId + 1) == FLAG_FAT_CHANGE_FAIL) return -1;
+		currentClusterId ++;
+		totalCluster --;
+	}
+
+	if (changeFAT(filePath, currentClusterId, 268435455) == FLAG_FAT_CHANGE_FAIL) return -1;
+
+	return 0;
 }
 
-unsigned long getFileSize(char * filePath, unsigned long startByte){
-	return 0;
+unsigned long getFileSize(char * filePath, unsigned long startByte){	
+	struct DirEntry* tmp = (struct DirEntry *) malloc(DIRENT_SIZE);
+        if(lseek(global_fd, startByte, 0) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+        if(read(global_fd, (void *) tmp, DIRENT_SIZE) == -1) { perror("Error: printOneInfo()"); exit(-1);}
+
+        unsigned long fileSize = tmp->DIR_FileSize;
+        free(tmp);
+        return fileSize;
+
 }
 
 unsigned long printOneInfo(char* filePath, unsigned long id, unsigned long startByte, int subFlag, char* parentDirName){
@@ -446,7 +517,7 @@ void getFileName(char* filePath, unsigned long startByte, char* fileName){
         int j = 0, k = 0;
         while(tmp->DIR_Name[j] != 32 && j < 8) 
 		fileName[k++] = tmp->DIR_Name[j++];
-        if(tmp->DIR_Attr / 16 % 2 == 0) 
+        if((tmp->DIR_Attr / 16 % 2 == 0) && tmp->DIR_Name[8] != 32) 
 		fileName[k++] = '.';
         j = 8;
         while(tmp->DIR_Name[j] != 32 && j < 11) 
